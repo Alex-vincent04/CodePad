@@ -1,0 +1,15 @@
+.env
+push_error.txt
+push_error_setup.txt
+final_error.txt
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+.vscode/
+.idea/
+venv/
+env/

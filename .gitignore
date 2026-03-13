@@ -7,11 +7,19 @@ ENV/
 env.bak/
 venv.bak/
 
+# Project temporary files
+push_error.txt
+push_error_setup.txt
+final_error.txt
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyc
+*.pyo
+*.pyd
 
 # IDEs
 .vscode/

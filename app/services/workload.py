@@ -4,7 +4,8 @@ from collections import Counter, defaultdict
 from typing import Iterable
 
 
-ACTIVE_TASK_STATUSES = {"new", "in_progress", "paused", "submitted_for_review"}
+ACTIVE_TASK_STATUSES = {"new", "in_progress", "paused", "submitted_for_review", "active"}
+DONE_TASK_STATUSES = {"done", "completed", "closed"}
 
 
 def normalize_specialty(role: str | None) -> str:
@@ -75,7 +76,7 @@ async def enrich_developers_with_workload(db, developers: Iterable[dict]) -> lis
             in_progress_task_counts[username] += 1
         elif status == "submitted_for_review":
             submitted_task_counts[username] += 1
-        elif status == "done":
+        elif status in DONE_TASK_STATUSES:
             done_task_counts[username] += 1
 
     online_users = {session.get("username") for session in open_sessions if session.get("username")}
@@ -133,7 +134,7 @@ def choose_project_auto_assignees(developers: Iterable[dict]) -> list[str]:
 def compute_project_progress(project: dict, tasks: Iterable[dict]) -> dict:
     task_list = list(tasks)
     total_tasks = len(task_list)
-    done_tasks = sum(1 for task in task_list if (task.get("status") or "").lower() == "done")
+    done_tasks = sum(1 for task in task_list if (task.get("status") or "").lower() in DONE_TASK_STATUSES)
     active_tasks = sum(
         1 for task in task_list if (task.get("status") or "new").strip().lower() in ACTIVE_TASK_STATUSES
     )

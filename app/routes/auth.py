@@ -705,54 +705,89 @@ async def complete_project(project_id: str):
     )
     return RedirectResponse(url=f"/projects/{project_id}", status_code=status.HTTP_302_FOUND)
 
-@router.get("/api/projects/{project_id}/download.zip")
-async def download_project(project_id: str):
-    """Download a zip of all code files in the completed project."""
+async def _build_project_zip(project_id: str) -> tuple[bytes, str]:
+    """Build a zip archive for the given project and return (zip_bytes, safe_filename)."""
     db = get_db()
-    project = await db.projects.find_one({"_id": ObjectId(project_id)})
+    
+    from bson import ObjectId
+    # Try to find by ObjectId
+    try:
+        obj_id = ObjectId(project_id)
+    except Exception:
+        obj_id = None
+        
+    project = await db.projects.find_one({"_id": obj_id}) if obj_id else await db.projects.find_one({"_id": project_id})
+    if not project:
+        # Try fallback if project_id is a hex string but not an ObjectId
+        project = await db.projects.find_one({"_id": project_id})
+        
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Match both string and ObjectId versions of project_id in tasks
+    id_list = [project_id]
+    if obj_id:
+        id_list.append(obj_id)
         
-    tasks_cursor = db.tasks.find({"project_id": project_id})
+    query = {"project_id": {"$in": id_list}}
+    tasks_cursor = db.tasks.find(query)
     tasks = await tasks_cursor.to_list(length=1000)
-    
+
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, False) as zip_file:
+    try:
+        compression = zipfile.ZIP_DEFLATED
+    except Exception:
+        compression = zipfile.ZIP_STORED
+
+    with zipfile.ZipFile(zip_buffer, "w", compression) as zip_file:
         for task in tasks:
             task_type = task.get("type", "backend")
-            title = task.get("title", "Untitled").replace(" ", "_")
+            raw_title = task.get("title", "Untitled")
+            # Sanitize filename
+            title = re.sub(r"[^\w-]", "_", raw_title).strip("_") or "task"
+            
             if task_type == "frontend":
-                # Create a subfolder for each frontend task to avoid name collisions
-                if task.get("html"):
-                    zip_file.writestr(f"frontend/{title}/index.html", task.get("html"))
-                if task.get("css"):
-                    zip_file.writestr(f"frontend/{title}/style.css", task.get("css"))
-                if task.get("js"):
-                    zip_file.writestr(f"frontend/{title}/script.js", task.get("js"))
-                # Fallback for old code field
-                if not any([task.get("html"), task.get("css"), task.get("js")]) and task.get("code"):
-                    zip_file.writestr(f"frontend/{title}/index.html", task.get("code"))
-            else:
-                if task.get("code"):
-                    zip_file.writestr(f"backend/{title}.py", task.get("code"))
+                html = task.get("html") or ""
+                css = task.get("css") or ""
+                js = task.get("js") or ""
+                code = task.get("code") or ""
                 
+                if html: zip_file.writestr(f"frontend/{title}/index.html", html)
+                if css: zip_file.writestr(f"frontend/{title}/style.css", css)
+                if js: zip_file.writestr(f"frontend/{title}/script.js", js)
+                
+                if not any([html, css, js]) and code:
+                    zip_file.writestr(f"frontend/{title}/index.html", code)
+            else:
+                code = task.get("code") or ""
+                if code:
+                    zip_file.writestr(f"backend/{title}.py", code)
+
     zip_data = zip_buffer.getvalue()
     project_slug = _slug_for_task(project.get("title", "Project"), str(project["_id"]))
-    
-    # Using direct Response with octet-stream and explicit attachment header 
-    # for maximum browser compatibility. Simple project.zip fallback.
     safe_filename = project_slug if project_slug else "project"
+    return zip_data, safe_filename
+
+
+@router.get("/api/projects/{project_id}/download")
+@router.get("/api/projects/{project_id}/download.zip")
+@router.get("/api/projects/{project_id}/download/{filename}")
+async def download_project(project_id: str, background_tasks: BackgroundTasks, filename: str = None):
+    """Download a zip of all code files in the project using robust FileResponse."""
+    zip_data, safe_filename = await _build_project_zip(project_id)
     
-    headers = {
-        "Content-Disposition": f'attachment; filename="{safe_filename}.zip"',
-        "Content-Type": "application/zip",
-        "X-Content-Type-Options": "nosniff"
-    }
+    # Use a temporary file to ensure correct Content-Length and browser compatibility
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+        tmp.write(zip_data)
+        tmp_path = tmp.name
     
-    return Response(
-        content=zip_data,
-        media_type="application/zip",
-        headers=headers
+    # Add a background task to delete the file after it's sent
+    background_tasks.add_task(os.remove, tmp_path)
+    
+    return FileResponse(
+        path=tmp_path,
+        filename=f"{safe_filename}.zip",
+        media_type="application/zip"
     )
 
 @router.post("/add_task")
@@ -1499,11 +1534,12 @@ async def get_developer_analytics(request: Request):
     for dev in developers:
         username = dev["username"]
         # Task counts for this developer
+        from app.services.workload import ACTIVE_TASK_STATUSES, DONE_TASK_STATUSES
         tasks = await db.tasks.find({"assigned_to": username}).to_list(length=1000)
-        tasks_done = sum(1 for t in tasks if t.get("status") == "done")
-        tasks_pending = sum(1 for t in tasks if t.get("status") in ("new", "in_progress", "paused", "submitted_for_review"))
-        tasks_in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
-        tasks_submitted = sum(1 for t in tasks if t.get("status") == "submitted_for_review")
+        tasks_done = sum(1 for t in tasks if (t.get("status") or "").lower() in DONE_TASK_STATUSES)
+        tasks_pending = sum(1 for t in tasks if (t.get("status") or "new").lower() in ACTIVE_TASK_STATUSES)
+        tasks_in_progress = sum(1 for t in tasks if (t.get("status") or "").lower() == "in_progress")
+        tasks_submitted = sum(1 for t in tasks if (t.get("status") or "").lower() == "submitted_for_review")
         # Sessions: total time and recent sessions
         # Total work time = sum of duration_minutes for all sessions. Each session's duration is
         # (logout_at - login_at) in minutes, set when the developer logs out (or when they

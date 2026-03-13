@@ -51,19 +51,19 @@
                     <div class="summary-strip summary-strip-manager">
                         <article class="summary-item">
                             <span class="summary-label">Projects</span>
-                            <strong class="summary-value">{{ projects|length }}</strong>
+                            <strong class="summary-value">{{ stats.projects_count }}</strong>
                         </article>
                         <article class="summary-item">
                             <span class="summary-label">Developers</span>
-                            <strong class="summary-value">{{ developers|length }}</strong>
+                            <strong class="summary-value">{{ stats.developers_count }}</strong>
                         </article>
                         <article class="summary-item">
-                            <span class="summary-label">In Progress</span>
-                            <strong class="summary-value">{{ tasks|selectattr('status', 'equalto', 'in_progress')|list|length }}</strong>
+                            <span class="summary-label">Active Work</span>
+                            <strong class="summary-value">{{ stats.tasks_active }}</strong>
                         </article>
                         <article class="summary-item">
                             <span class="summary-label">In Review</span>
-                            <strong class="summary-value">{{ tasks|selectattr('status', 'equalto', 'submitted_for_review')|list|length }}</strong>
+                            <strong class="summary-value">{{ stats.tasks_review }}</strong>
                         </article>
                         <article class="summary-item">
                             <span class="summary-label">Join Requests</span>
@@ -182,7 +182,9 @@
                                                 <div class="dev-availability availability-{{ 'free' if dev.is_free else 'busy' }}">
                                                     {{ dev.availability_label }}
                                                 </div>
-                                                <div class="dev-load">{{ dev.availability_detail }}</div>
+                                                <div class="dev-load" style="font-size: 0.75rem; opacity: 0.8;">
+                                                    <strong>{{ dev.active_task_count }}</strong> active / <strong>{{ dev.total_task_count }}</strong> total
+                                                </div>
                                             </div>
                                             {% endfor %}
                                         </div>
@@ -200,7 +202,9 @@
                                                 <div class="dev-availability availability-{{ 'free' if dev.is_free else 'busy' }}">
                                                     {{ dev.availability_label }}
                                                 </div>
-                                                <div class="dev-load">{{ dev.availability_detail }}</div>
+                                                <div class="dev-load" style="font-size: 0.75rem; opacity: 0.8;">
+                                                    <strong>{{ dev.active_task_count }}</strong> active / <strong>{{ dev.total_task_count }}</strong> total
+                                                </div>
                                             </div>
                                             {% endfor %}
                                         </div>
@@ -297,10 +301,15 @@
                                                     data-target="{{ project._id }}" data-title="{{ project.title }}"
                                                     data-desc="{{ project.description or '' }}"
                                                     data-devs='{{ project.assigned_developers | tojson }}'
-                                                    onclick='openEditProjectModal(this.dataset.target, this.dataset.title, this.dataset.desc, JSON.parse(this.dataset.devs || "[]"))'
-                                                    title="Edit Project">
-                                                    Edit
+                                                    onclick='openEditProjectModal(this.dataset.target, this.dataset.title, this.dataset.desc, JSON.parse(this.dataset.devs || "[]"))'>
+                                                    Settings
                                                 </button>
+                                                <a href="/api/projects/{{ project._id }}/download/source.zip?t={{ range(1, 1000) | random }}"
+                                                   class="download-code-btn-link"
+                                                   title="Download ZIP"
+                                                   download="{{ project.title|lower|replace(' ', '_') }}.zip">
+                                                    Download ZIP
+                                                 </a>
                                                 <button type="button" class="delete-btn" title="Delete Project"
                                                     onclick="openDeleteProjectModal('{{ project._id }}', '{{ project.title|escape }}')">
                                                     &times;

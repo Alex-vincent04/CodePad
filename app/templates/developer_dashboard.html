@@ -74,14 +74,8 @@
                             <strong class="summary-value">{{ tasks|length }}</strong>
                         </article>
                         <article class="summary-item">
-                            <span class="summary-label">In Progress</span>
-                            <strong class="summary-value">{{ tasks|selectattr('status', 'equalto',
-                                'in_progress')|list|length }}</strong>
-                        </article>
-                        <article class="summary-item">
                             <span class="summary-label">Done</span>
-                            <strong class="summary-value">{{ tasks|selectattr('status', 'equalto', 'done')|list|length
-                                }}</strong>
+                            <strong class="summary-value">{{ tasks|selectattr('status', 'in', ['done', 'completed', 'closed'])|list|length }}</strong>
                         </article>
                     </div>
                 </section>
@@ -373,7 +367,7 @@
                     </div>
                 </div>
                 <div id="previewPanel"
-                    style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2000; background: #fff; flex-direction: column;">
+                    style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10000; background: #fff; flex-direction: column;">
                     <div class="mac-window-header"
                         style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: rgba(240, 240, 240, 0.7); backdrop-filter: blur(8px); border-bottom: 1px solid rgba(0,0,0,0.1); width: 100%; box-sizing: border-box; position: absolute; top: 0; left: 0; z-index: 10;">
                         <div style="display: flex; gap: 8px; width: 140px; align-items: center;">
@@ -1386,9 +1380,9 @@
 
             // Show Run button only for backend (Python) tasks
             const runBtn = document.getElementById('runPythonBtn');
-            // Show Preview button only for frontend (HTML) tasks
+            // Show Preview button for both frontend and backend tasks
             const previewBtn = document.getElementById('previewHtmlBtn');
-            previewBtn.style.display = (taskType === 'frontend' && !isReadOnly) ? 'inline-block' : 'none';
+            previewBtn.style.display = 'inline-block';
             runBtn.style.display = (taskType === 'backend' && !isReadOnly) ? 'inline-block' : 'none';
 
             // Show pause button only if task is in_progress
@@ -1744,6 +1738,42 @@
                     codeBtn.textContent = "View Submitted Code";
                     codeBtn.style.display = "inline-block";
                     document.getElementById('commentsSection').style.display = 'none';
+                    
+                    if (type === 'frontend' && !document.getElementById('modalPreviewLink')) {
+                        const previewBtn = document.createElement('button');
+                        previewBtn.id = 'modalPreviewLink';
+                        previewBtn.className = 'modal-action-btn';
+                        previewBtn.style.marginLeft = '10px';
+                        previewBtn.style.background = 'var(--accent-1)';
+                        previewBtn.textContent = 'Preview Output';
+                        previewBtn.onclick = () => {
+                            const panel = document.getElementById('previewPanel');
+                            const iframe = document.getElementById('previewIframe');
+                            const backBtn = panel.querySelector('.terminal-back-btn');
+                            if (backBtn) backBtn.textContent = 'Close Preview';
+                            
+                            panel.style.display = 'flex';
+                            fetch(`/get_task_code/${taskId}`)
+                                .then(res => res.json())
+                                .then(data => {
+                                    const html = data.html || '';
+                                    const css = data.css || '';
+                                    const js = data.js || '';
+                                    const fullHtml = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`;
+                                    
+                                    try {
+                                        const doc = iframe.contentWindow.document;
+                                        doc.open();
+                                        doc.write(fullHtml);
+                                        doc.close();
+                                    } catch (e) {
+                                        // Fallback if cross-origin or other error
+                                        iframe.srcdoc = fullHtml;
+                                    }
+                                });
+                        };
+                        document.querySelector('.modal-footer').appendChild(previewBtn);
+                    }
                 } else if (status === "completed") {
                     codeBtn.textContent = "View Submitted Code";
                     codeBtn.style.display = "inline-block";
@@ -1764,6 +1794,10 @@
                     document.querySelector('.modal-footer').appendChild(githubBtn);
                 } else if (status !== "done" && document.getElementById('modalGithubLink')) {
                     document.getElementById('modalGithubLink').remove();
+                }
+
+                if (status !== "submitted_for_review" && document.getElementById('modalPreviewLink')) {
+                    document.getElementById('modalPreviewLink').remove();
                 }
 
                 document.getElementById('taskModal').style.display = "flex";
@@ -1932,16 +1966,19 @@
 
         document.getElementById('previewHtmlBtn').onclick = function () {
             const panel = document.getElementById('previewPanel');
+            const iframeContainer = panel.querySelector('.modal-body') || panel; // Safely find container
+            
+            // Recreate iframe to force a totally fresh render
+            iframeContainer.innerHTML = `
+                <iframe id="previewIframe" 
+                        style="width: 100%; height: 100%; border: none; background: white;"
+                        sandbox="allow-scripts allow-same-origin" 
+                        title="Code Preview">
+                </iframe>`;
+            
             const iframe = document.getElementById('previewIframe');
-
-            // Step 1: Clear old content first to force a re-render on the 2nd+ click
-            iframe.removeAttribute('srcdoc');
-            iframe.src = 'about:blank';
-
-            // Step 2: Show the panel
             panel.style.display = 'flex';
 
-            // Step 3: Set content AFTER the iframe is rendered (fixes black screen on 2nd+ open)
             setTimeout(() => {
                 let fullHtml = '';
                 if (currentTaskType === 'frontend' && (tripleEditors.html || tripleEditors.css || tripleEditors.js)) {
@@ -1952,14 +1989,21 @@
                 } else if (monacoEditor) {
                     const userCode = monacoEditor.getValue();
                     let bodyContent = userCode;
-                    const bodyMatch = userCode.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-                    if (bodyMatch) {
-                        bodyContent = bodyMatch[1];
+                    // Improved heuristic for backend tasks that might not have HTML tags
+                    if (userCode.includes('<html') || userCode.includes('<body') || userCode.includes('<div')) {
+                        const bodyMatch = userCode.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                        if (bodyMatch) {
+                            bodyContent = bodyMatch[1];
+                        }
+                        fullHtml = `<!DOCTYPE html><html><head><title>Preview</title></head><body>${bodyContent}</body></html>`;
+                    } else {
+                        // For pure python or non-html code, just show it in a pre block
+                        fullHtml = `<!DOCTYPE html><html><head><title>Preview</title><style>body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; white-space: pre-wrap; }</style></head><body>${userCode}</body></html>`;
                     }
-                    fullHtml = `<!DOCTYPE html><html><head><title>Preview</title></head><body>${bodyContent}</body></html>`;
                 }
+                
                 iframe.srcdoc = fullHtml;
-            }, 50);
+            }, 100);
         };
 
         function closePreviewPanel() {

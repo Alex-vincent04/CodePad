@@ -64,13 +64,12 @@
                         <button type="button" class="secondary-button" onclick="openCompletedProjectGitHubUrl()">
                             View on GitHub
                         </button>
-                        <a href="/api/projects/{{ project._id }}/download.zip"
-                            download="{{ project.title | replace(' ', '_') }}.zip"
-                            type="application/zip"
-                            class="secondary-button">
+                        {% endif %}
+                        <a href="/api/projects/{{ project._id }}/download/source.zip?t={{ range(1, 1000) | random }}"
+                            class="secondary-button" title="Download ZIP"
+                            download="{{ project.title|lower|replace(' ', '_') }}.zip">
                             Download Source
                         </a>
-                        {% endif %}
                     </div>
                 </section>
 
@@ -888,20 +887,38 @@
         }
 
         function updateSubmittedPreview() {
-            const iframe = document.getElementById('submitted-preview-iframe');
-            if (!iframe) return;
+            const panel = document.getElementById('submitted-preview-panel');
+            if (!panel) return;
 
-            let html = '', css = '', js = '';
-            if (currentSubmittedTaskType === 'frontend') {
-                html = (submittedTripleEditors.html ? submittedTripleEditors.html.getValue() : (currentSubmittedData.html || ''));
-                css = (submittedTripleEditors.css ? submittedTripleEditors.css.getValue() : (currentSubmittedData.css || ''));
-                js = (submittedTripleEditors.js ? submittedTripleEditors.js.getValue() : (currentSubmittedData.js || ''));
-                const combined = `<!DOCTYPE html><html><head><style>${css}</style></head><body>${html}<script>${js}<\/script></body></html>`;
-                iframe.srcdoc = combined;
-            } else {
-                const code = submittedEditor ? submittedEditor.getValue() : (currentSubmittedData.code || '');
-                iframe.srcdoc = code || "<html><body><p style='color:#888; font-family:sans-serif; text-align:center; margin-top:100px;'>No content to preview</p></body></html>";
-            }
+            // Recreate iframe to force a totally fresh render (avoids browser caching/race bugs)
+            panel.innerHTML = `
+                <iframe id="submitted-preview-iframe" 
+                        style="width: 100%; height: 100%; border: none; background: white;"
+                        sandbox="allow-scripts allow-same-origin" 
+                        title="Code Preview">
+                </iframe>`;
+            
+            const iframe = document.getElementById('submitted-preview-iframe');
+
+            setTimeout(() => {
+                let html = '', css = '', js = '';
+                if (currentSubmittedTaskType === 'frontend') {
+                    html = (submittedTripleEditors.html ? submittedTripleEditors.html.getValue() : (currentSubmittedData.html || ''));
+                    css = (submittedTripleEditors.css ? submittedTripleEditors.css.getValue() : (currentSubmittedData.css || ''));
+                    js = (submittedTripleEditors.js ? submittedTripleEditors.js.getValue() : (currentSubmittedData.js || ''));
+                    const combined = `<!DOCTYPE html><html><head><style>${css || ''}</style></head><body>${html || ''}<script>${js || ''}<\/script></body></html>`;
+                    iframe.srcdoc = combined;
+                } else {
+                    const code = submittedEditor ? submittedEditor.getValue() : (currentSubmittedData.code || '');
+                    if (code && (code.includes('<html') || code.includes('<body') || code.includes('<div'))) {
+                        iframe.srcdoc = code;
+                    } else if (code) {
+                        iframe.srcdoc = `<!DOCTYPE html><html><head><title>Preview</title><style>body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; white-space: pre-wrap; }</style></head><body>${code}</body></html>`;
+                    } else {
+                        iframe.srcdoc = "<html><body><p style='color:#888; font-family:sans-serif; text-align:center; margin-top:100px;'>No content to preview</p></body></html>";
+                    }
+                }
+            }, 100);
         }
 
         let submittedRunWS = null;

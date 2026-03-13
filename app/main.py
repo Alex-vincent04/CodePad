@@ -5,7 +5,12 @@ from fastapi.templating import Jinja2Templates
 from app.models.db import connect, get_db, mongodb
 from app.routes import auth
 from app.routes.auth import migrate_usernames
-from app.services.workload import compute_project_progress, enrich_developers_with_workload
+from app.services.workload import (
+    compute_project_progress,
+    enrich_developers_with_workload,
+    ACTIVE_TASK_STATUSES,
+    DONE_TASK_STATUSES,
+)
 import asyncio
 import os
 from dotenv import load_dotenv
@@ -160,19 +165,27 @@ async def dashboard(request: Request):
             ]
             enriched_projects.append(project_copy)
         # Show all projects (including completed) in the overview
-        return templates.TemplateResponse(
-            "manager_dashboard.html",
-            {
-                "request": request,
-                "username": username,
-                "tasks": tasks,
-                "projects": enriched_projects,
-                "developers": developers,
-                "pending_developers": pending_developers,
-                "github_repo": github_repo,
-                "user_profile": user_profile,
-            }
-        )
+        # Prepare summary stats for manager
+        stats = {
+            "projects_count": len(projects),
+            "developers_count": len(developers),
+            "tasks_in_progress": sum(1 for t in tasks if (t.get("status") or "").lower() == "in_progress"),
+            "tasks_active": sum(1 for t in tasks if (t.get("status") or "new").lower() in ACTIVE_TASK_STATUSES),
+            "tasks_done": sum(1 for t in tasks if (t.get("status") or "").lower() in DONE_TASK_STATUSES),
+            "tasks_review": sum(1 for t in tasks if (t.get("status") or "").lower() == "submitted_for_review"),
+        }
+        
+        return templates.TemplateResponse("manager_dashboard.html", {
+            "request": request,
+            "username": username,
+            "user_profile": user_profile,
+            "projects": enriched_projects,
+            "developers": developers,
+            "pending_developers": pending_developers,
+            "tasks": tasks,
+            "stats": stats,
+            "github_repo": github_repo
+        })
     else:
         # Get tasks assigned to this developer
         my_tasks = [task for task in tasks if task.get("assigned_to") == username]
